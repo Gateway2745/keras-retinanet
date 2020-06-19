@@ -1,7 +1,6 @@
 from __future__ import print_function
 import sys
 
-
 class Backbone(object):
     """ This class stores additional information on backbones.
     """
@@ -61,6 +60,8 @@ def backbone(backbone_name):
         from .vgg import VGGBackbone as b
     elif 'EfficientNet' in backbone_name:
         from .effnet import EfficientNetBackbone as b
+    elif 'resnest50' in backbone_name:
+        from .resnest import ResNestBackbone as b
     else:
         raise NotImplementedError('Backbone class for  \'{}\' not implemented.'.format(backbone))
 
