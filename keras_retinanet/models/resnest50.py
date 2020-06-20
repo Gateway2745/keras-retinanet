@@ -22,7 +22,7 @@ from tensorflow.keras.utils import get_custom_objects
 
 class GroupedConv2D(Layer):
     COUNT=1
-    def __init__(self, filters, kernel_size, use_keras=True, **kwargs):
+    def __init__(self, filters, kernel_size, **kwargs):
         """Initialize the layer.
         Args:
         filters: Integer, the dimensionality of the output space.
@@ -34,19 +34,19 @@ class GroupedConv2D(Layer):
         """
         super(GroupedConv2D, self).__init__(name=f'GroupConv2D_{GroupedConv2D.COUNT}')
         GroupedConv2D.COUNT += 1
+        self.kernel_size = kernel_size
         self._groups = len(kernel_size)
         self._channel_axis = -1
         self.filters = filters
         splits = self._split_channels(filters, self._groups)
+        self._kwargs = kwargs
         for i in range(self._groups):
-            self.__setattr__(f'subconv{i}', self._get_conv2d(splits[i], kernel_size[i], use_keras, **kwargs))
+            self.__setattr__(f'subconv{i}', self._get_conv2d(splits[i], kernel_size[i], **kwargs))
 
-    def _get_conv2d(self, filters, kernel_size, use_keras, **kwargs):
+    def _get_conv2d(self, filters, kernel_size, **kwargs):
         """A helper function to create Conv2D layer."""
-        if use_keras:
-            return Conv2D(filters=filters, kernel_size=kernel_size, **kwargs)
-        else:
-            return Conv2D(filters=filters, kernel_size=kernel_size, **kwargs)
+        return Conv2D(filters=filters, kernel_size=kernel_size, **kwargs)
+
 
     def _split_channels(self, total_filters, num_groups):
         split = [total_filters // num_groups for _ in range(num_groups)]
@@ -69,6 +69,18 @@ class GroupedConv2D(Layer):
     
     def compute_output_shape(self, input_shape):
         return (*input_shape[:3], self.filters)
+    
+    def get_config(self):
+        config = super(GroupedConv2D, self).get_config()
+        config.update({
+          'filters': int(self.filters),
+          'kernel_size':self.kernel_size,
+#           "groups": self._groups,
+#           'channel_axis': self._channel_axis,
+#           'splits': self.splits,
+          **self._kwargs,
+        })
+        return config
 
 def _rsoftmax(input_tensor, filters, radix, groups):
     x = input_tensor
@@ -84,25 +96,52 @@ def _rsoftmax(input_tensor, filters, radix, groups):
 
 class _SplAtConv2d(Layer):
     COUNT=1
-    def __init__(self, in_channels, filters=64, kernel_size=3, stride=1, dilation=1, groups=1, radix=0, active="relu", reduction_factor=4):
+    def __init__(
+        self,
+        in_channels,
+        filters=64,
+        kernel_size=3,
+        stride=1,
+        dilation=1,
+        groups=1,
+        radix=0,
+        active='relu',
+        reduction_factor=4,
+        **kwargs
+        ):
         super(_SplAtConv2d, self).__init__(name=f'SplAtConv2D_{_SplAtConv2d.COUNT}')
         _SplAtConv2d.COUNT += 1
-        self.radix=radix
-        self.groups=groups
+        self.in_channels = in_channels
         self.filters = filters
-        self.inter_channels = max(int(in_channels) * radix // reduction_factor, 32)
-        self.channel_axis = -1  # not for change
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.dilation = dilation
+        self.groups = groups
+        self.radix = radix
         self.active = active
-        self.group_conv = GroupedConv2D(filters=filters * radix, kernel_size=[kernel_size for i in range(groups * radix)],
-                          use_keras=True, padding="same", kernel_initializer="he_normal", use_bias=False,
-                          data_format="channels_last", dilation_rate=dilation)
-        self.BN0 = BatchNormalization(axis=self.channel_axis, epsilon=1.001e-5)
-        self.BN1 = BatchNormalization(axis=self.channel_axis, epsilon=1.001e-5)
+        self.reduction_factor = reduction_factor
+        self.inter_channels = max(int(self.in_channels) * self.radix
+                                  // self.reduction_factor, 32)
+        self.channel_axis = -1  # not for change
+        self.group_conv = GroupedConv2D(
+            filters=self.filters * self.radix,
+            kernel_size=[self.kernel_size for i in range(self.groups * self.radix)],
+            padding='same',
+            kernel_initializer='he_normal',
+            use_bias=False,
+            data_format='channels_last',
+            dilation_rate=self.dilation,
+            )
+        self.BN0 = BatchNormalization(axis=self.channel_axis,
+                                      epsilon=1.001e-5)
+        self.BN1 = BatchNormalization(axis=self.channel_axis,
+                                      epsilon=1.001e-5)
         self.CONV0 = Conv2D(self.inter_channels, kernel_size=1)
         self.CONV1 = Conv2D(filters * radix, kernel_size=1)
         self.ACT = Activation(self.active)
-        self.GAP = GlobalAveragePooling2D(data_format="channels_last")
+        self.GAP = GlobalAveragePooling2D(data_format='channels_last')
         self.RESHAPE = Reshape([1, 1, filters])
+        self._kwargs = kwargs
     
     def call(self, inputs, **kwargs):
         x = inputs
@@ -144,6 +183,32 @@ class _SplAtConv2d(Layer):
     
     def compute_output_shape(self, input_shape):
         return (input_shape[0], *self.output_shapes, self.filters)
+    
+    def get_config(self):
+        config = super(_SplAtConv2d, self).get_config()
+        config.update({
+          "in_channels":int(self.in_channels),
+          "filters":int(self.filters),
+          "kernel_size":int(self.kernel_size),
+          "stride":int(self.stride),
+          "dilation":int(self.dilation),     
+          "radix": int(self.radix),
+          'groups': int(self.groups),
+          'active': self.active,
+          'reduction_factor':int(self.reduction_factor),
+          **self._kwargs
+#           'inter_channels': self.inter_channels,
+#           'channel_axis': self.channel_axis,          
+#           'group_conv': self.group_conv,
+#           'BN0': self.BN0,
+#           'BN1': self.BN1,
+#           'CONV0': self.CONV0,
+#           'CONV1': self.CONV1,
+#           'ACT': self.ACT,
+#           'GAP': self.GAP,
+#           'RESHAPE': self.RESHAPE,
+        })
+        return config
 
 def get_flops(model):
     run_meta = tf.compat.v1.RunMetadata()
@@ -410,19 +475,19 @@ class ResNest():
             if self.verbose: print('----- layer {} out {} -----'.format(idx,x.shape))
             output_tensors.append(x)  # outputs for retinanet
 
-        x = GlobalAveragePooling2D(name='avg_pool')(x) 
-        if self.verbose:
-            print("pool_out:", x.shape) # remove the concats var
+#         x = GlobalAveragePooling2D(name='avg_pool')(x) 
+#         if self.verbose:
+#             print("pool_out:", x.shape) # remove the concats var
 
-        if self.dropout_rate > 0:
-            x = Dropout(self.dropout_rate, noise_shape=None)(x)
+#         if self.dropout_rate > 0:
+#             x = Dropout(self.dropout_rate, noise_shape=None)(x)
 
-        fc_out = Dense(self.n_classes, kernel_initializer="he_normal", use_bias=False, name="fc_NObias")(x) # replace concats to x
-        if self.verbose:
-            print("fc_out:", fc_out.shape)
+#         fc_out = Dense(self.n_classes, kernel_initializer="he_normal", use_bias=False, name="fc_NObias")(x) # replace concats to x
+#         if self.verbose:
+#             print("fc_out:", fc_out.shape)
 
-        if self.fc_activation:
-            fc_out = Activation(self.fc_activation)(fc_out)
+#         if self.fc_activation:
+#             fc_out = Activation(self.fc_activation)(fc_out)
 
         model = Model(inputs=input_sig, outputs=output_tensors)
 

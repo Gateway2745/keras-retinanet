@@ -26,11 +26,14 @@ class ResNestBackbone(Backbone):
 
     def __init__(self, backbone):
         super(ResNestBackbone, self).__init__(backbone)
+        self.custom_objects.update(
+        {'GroupedConv2D':resnest50.GroupedConv2D,
+        '_SplAtConv2d':resnest50._SplAtConv2d,})
 
     def retinanet(self, *args, **kwargs):
         """ Returns a retinanet model using the correct backbone.
         """
-        return resnet_retinanet(*args, backbone=self.backbone, **kwargs)
+        return resnest_retinanet(*args, backbone=self.backbone, **kwargs)
 
     def download_imagenet(self):
          pass
@@ -50,7 +53,7 @@ class ResNestBackbone(Backbone):
         return preprocess_image(inputs, mode='caffe')
 
 
-def resnet_retinanet(num_classes, backbone='resnet50', inputs=None, modifier=None, **kwargs):
+def resnest_retinanet(num_classes, backbone='resnest50', inputs=None, modifier=None, **kwargs):
     """ Constructs a retinanet model using a resnet backbone.
     Args
         num_classes: Number of classes to predict.
@@ -69,7 +72,7 @@ def resnet_retinanet(num_classes, backbone='resnet50', inputs=None, modifier=Non
 
     # create the resnet backbone
     if backbone == 'resnest50':
-        resnest = resnest50.ResNest(verbose=False).build(inputs)
+        resnest = resnest50.ResNest(radix=2, groups=1, verbose=False).build(inputs)
     else:
         raise ValueError('Backbone (\'{}\') is invalid.'.format(backbone))
 
